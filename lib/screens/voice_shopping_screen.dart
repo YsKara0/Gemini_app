@@ -8,6 +8,8 @@ import 'dart:developer';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:google_generative_ai/google_generative_ai.dart';
 import 'package:flutter_gemini/components/theme_button.dart';
+import 'package:flutter_gemini/services/shopping_list_service.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 // import 'package:permission_handler/permission_handler.dart';
 
 class VoiceShoppingScreen extends StatefulWidget {
@@ -19,6 +21,11 @@ class VoiceShoppingScreen extends StatefulWidget {
 
 class _VoiceShoppingScreenState extends State<VoiceShoppingScreen> {
   List<Urun> _urunler = [];
+  final ShoppingListService _service = ShoppingListService();
+  String? _listId; // default list id
+  Stream<List<ItemRecord>>? _itemsStream;
+  String? _listError;
+  bool _offlineMode = false;
 
   final stt.SpeechToText _speech = stt.SpeechToText();
   bool _speechAvailable = false;
@@ -49,6 +56,27 @@ class _VoiceShoppingScreenState extends State<VoiceShoppingScreen> {
       model: 'gemini-1.5-flash-8b', // Daha hızlı ve az yüklü model
     );
     _startGeminiSession();
+
+    // Ensure default Firestore list
+    _initList();
+  }
+
+  Future<void> _initList() async {
+    try {
+      final uid = FirebaseAuth.instance.currentUser?.uid ?? 'local';
+      final id = await _service.ensureDefaultList(uid);
+      setState(() {
+        _listId = id;
+        _itemsStream = _service.watchItemsWithIds(id);
+        _listError = null;
+        _offlineMode = false;
+      });
+    } catch (e) {
+      setState(() {
+        _listError = 'Firestore listesi başlatılamadı: $e';
+        _offlineMode = true; // Yerel liste modu
+      });
+    }
   }
 
   void _startListening() {
@@ -98,22 +126,35 @@ class _VoiceShoppingScreenState extends State<VoiceShoppingScreen> {
         try {
           final List urunlerData = jsonDecode(cleanedText);
           _urunler = urunlerData.map((e) => Urun.fromMap(e)).toList();
+          // Persist to Firestore
+          if (!_offlineMode && _listId != null) {
+            try {
+              for (final u in _urunler) {
+                await _service.addItem(_listId!, u);
+              }
+            } catch (e) {
+              setState(() {
+                _listError = 'Firestore ekleme hatası: $e';
+                _offlineMode = true;
+              });
+            }
+          }
           setState(() {});
           log('${_urunler.length} ürün eklendi');
         } catch (jsonError) {
           log('JSON Parse Hatası: $jsonError');
           // Fallback: Basit string parsing ile ürün ekleme
-          _parseSimpleText(message);
+          await _parseSimpleText(message);
         }
       }
     } catch (e) {
       log('Hata: $e');
       // Fallback: Basit string parsing ile ürün ekleme
-      _parseSimpleText(message);
+  await _parseSimpleText(message);
     }
   }
 
-  void _parseSimpleText(String message) {
+  Future<void> _parseSimpleText(String message) async {
     // Basit kelime bazlı parsing
     List<String> words = message.toLowerCase().split(' ');
     List<Urun> newUrunler = [];
@@ -152,6 +193,19 @@ class _VoiceShoppingScreenState extends State<VoiceShoppingScreen> {
       setState(() {
         _urunler.addAll(newUrunler);
       });
+      // Persist parsed items
+  if (!_offlineMode && _listId != null) {
+        try {
+          for (final u in newUrunler) {
+    await _service.addItem(_listId!, u);
+          }
+        } catch (e) {
+          setState(() {
+            _listError = 'Firestore ekleme hatası: $e';
+            _offlineMode = true;
+          });
+        }
+      }
       log('${newUrunler.length} ürün basit parsing ile eklendi');
     }
   }
@@ -176,6 +230,22 @@ class _VoiceShoppingScreenState extends State<VoiceShoppingScreen> {
         padding: const EdgeInsets.all(16.0),
         child: Column(
           children: [
+            if (_listError != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8.0),
+                child: Row(
+                  children: [
+                    const Icon(Icons.error, color: Colors.red),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _listError!,
+                        style: const TextStyle(color: Colors.red),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             _urunlerList(),
             const SizedBox(height: 20),
             
@@ -236,16 +306,14 @@ class _VoiceShoppingScreenState extends State<VoiceShoppingScreen> {
   }
   
  Widget _urunlerList() {
-  if (_urunler.isEmpty) {
+  if (!_offlineMode && _listId == null) {
     return const Padding(
       padding: EdgeInsets.all(20.0),
-      child: Text(
-        "Henüz bir ürün eklenmedi.\nMikrofon butonuna basarak ürün ekleyin!",
-        textAlign: TextAlign.center,
-        style: TextStyle(fontSize: 16, color: Colors.grey),
-      ),
+      child: Center(child: CircularProgressIndicator()),
     );
-  } else {
+  }
+  if (_offlineMode) {
+    // Yerel tablo modu (tek tablo)
     return Flexible(
       child: Card(
         margin: const EdgeInsets.all(16),
@@ -258,11 +326,8 @@ class _VoiceShoppingScreenState extends State<VoiceShoppingScreen> {
                   const Icon(Icons.shopping_cart, color: Colors.green),
                   const SizedBox(width: 8),
                   Text(
-                    'Alışveriş Listesi (${_urunler.length})',
-                    style: const TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
+                    'Alışveriş Listesi (Yerel) — ${_urunler.length}',
+                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                   ),
                   const Spacer(),
                   IconButton(
@@ -272,45 +337,143 @@ class _VoiceShoppingScreenState extends State<VoiceShoppingScreen> {
                         _urunler.clear();
                       });
                     },
-                    tooltip: 'Tümünü Temizle',
                   ),
                 ],
               ),
             ),
             Expanded(
-              child: ListView.builder(
-                itemCount: _urunler.length,
-                itemBuilder: (context, index) {
-                  final Urun urun = _urunler[index];
-                  return Card(
-                    margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    child: ListTile(
-                      leading: CircleAvatar(
-                        backgroundColor: Colors.green[100],
-                        child: Text('${index + 1}'),
-                      ),
-                      title: Text(
-                        urun.isim,
-                        style: const TextStyle(fontWeight: FontWeight.w500),
-                      ),
-                      subtitle: Text('${urun.miktar} ${urun.miktarTuru}'),
-                      trailing: IconButton(
-                        icon: const Icon(Icons.delete, color: Colors.red),
-                        onPressed: () {
-                          setState(() {
-                            _urunler.removeAt(index);
-                          });
-                        },
-                      ),
-                    ),
-                  );
-                },
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: DataTable(
+                  columns: const [
+                    DataColumn(label: Text('#')),
+                    DataColumn(label: Text('Ürün')),
+                    DataColumn(label: Text('Miktar')),
+                    DataColumn(label: Text('Birim')),
+                    DataColumn(label: Text('İşlem')),
+                  ],
+                  rows: [
+                    for (int i = 0; i < _urunler.length; i++)
+                      DataRow(cells: [
+                        DataCell(Text('${i + 1}')),
+                        DataCell(Text(_urunler[i].isim)),
+                        DataCell(Text(_urunler[i].miktar.toString())),
+                        DataCell(Text(_urunler[i].miktarTuru)),
+                        DataCell(
+                          IconButton(
+                            icon: const Icon(Icons.delete, color: Colors.red),
+                            onPressed: () {
+                              setState(() {
+                                _urunler.removeAt(i);
+                              });
+                            },
+                          ),
+                        ),
+                      ])
+                  ],
+                ),
               ),
             ),
           ],
         ),
       ),
     );
- }
+  }
+  return Flexible(
+    child: Card(
+      margin: const EdgeInsets.all(16),
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Row(
+              children: [
+                const Icon(Icons.shopping_cart, color: Colors.green),
+                const SizedBox(width: 8),
+                const Text(
+                  'Alışveriş Listesi',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const Spacer(),
+                IconButton(
+                  icon: const Icon(Icons.clear_all, color: Colors.red),
+                  onPressed: _listId == null
+                      ? null
+                      : () async {
+                          await _service.clearItems(_listId!);
+                        },
+                  tooltip: 'Tümünü Temizle',
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: StreamBuilder<List<ItemRecord>>(
+              stream: _itemsStream,
+              builder: (context, snapshot) {
+                if (snapshot.hasError) {
+                  return Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Text(
+                      'Liste yüklenirken hata: ${snapshot.error}',
+                      style: const TextStyle(color: Colors.red),
+                    ),
+                  );
+                }
+                if (!snapshot.hasData) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                final items = snapshot.data!;
+                if (items.isEmpty) {
+                  return const Padding(
+                    padding: EdgeInsets.all(20.0),
+                    child: Text(
+                      "Henüz bir ürün eklenmedi.\nMikrofon butonuna basarak ürün ekleyin!",
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 16, color: Colors.grey),
+                    ),
+                  );
+                }
+                return SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: DataTable(
+                    columns: const [
+                      DataColumn(label: Text('#')),
+                      DataColumn(label: Text('Ürün')),
+                      DataColumn(label: Text('Miktar')),
+                      DataColumn(label: Text('Birim')),
+                      DataColumn(label: Text('İşlem')),
+                    ],
+                    rows: [
+                      for (int i = 0; i < items.length; i++)
+                        DataRow(cells: [
+                          DataCell(Text('${i + 1}')),
+                          DataCell(Text(items[i].urun.isim)),
+                          DataCell(Text(items[i].urun.miktar.toString())),
+                          DataCell(Text(items[i].urun.miktarTuru)),
+                          DataCell(
+                            IconButton(
+                              icon: const Icon(Icons.delete, color: Colors.red),
+                              onPressed: () async {
+                                if (_listId != null) {
+                                  await _service.removeItem(_listId!, items[i].id);
+                                }
+                              },
+                            ),
+                          ),
+                        ])
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
 }
 }

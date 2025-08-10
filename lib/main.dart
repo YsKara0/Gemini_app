@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_gemini/theme/theme_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_gemini/screens/home_screen.dart';
@@ -23,6 +24,15 @@ Future<void> main() async {
   } catch (e) {
     // If already initialized or fails, log and continue
     print('Firebase init error: $e');
+  }
+  
+  // Ensure there's a signed-in user (Anonymous) for Firestore security rules
+  try {
+    if (FirebaseAuth.instance.currentUser == null) {
+      await FirebaseAuth.instance.signInAnonymously();
+    }
+  } catch (e) {
+    print('Anonymous sign-in failed: $e');
   }
   
   runApp(MyApp());
