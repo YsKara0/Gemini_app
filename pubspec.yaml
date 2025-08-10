@@ -1,0 +1,64 @@
+name: flutter_gemini
+description: A Flutter application with Gemini AI integration for cooking assistance.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  
+  # UI and State Management
+  provider: ^6.1.1
+  
+  # Environment variables
+  flutter_dotenv: ^5.1.0
+  
+  # HTTP requests
+  http: ^1.1.0
+  
+  # Google Generative AI (Gemini)
+  google_generative_ai: ^0.2.0
+  
+  # Weather service
+  weather: ^3.1.1
+  
+  # Voice recognition
+  speech_to_text: ^6.6.0
+  
+  # Text to speech
+  flutter_tts: ^3.8.5
+  
+  # Country picker
+  country_picker: ^2.0.23
+  
+  # Date formatting
+  intl: ^0.18.1
+  
+  # Icons
+  cupertino_icons: ^1.0.6
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
+  
+  assets:
+    - .env
+    
+  # To add custom fonts to your application, add a fonts section here,
+  # in this "flutter" section. Each entry in this list should have a
+  # "family" key with the font family name, and a "fonts" key with a
+  # list giving the locations of the font files to use for that family.
+  # For example:
+  # fonts:
+  #   - family: Schyler
+  #     fonts:
+  #       - asset: fonts/Schyler-Regular.ttf
+  #       - asset: fonts/Schyler-Italic.ttf
+  #         style: italic
