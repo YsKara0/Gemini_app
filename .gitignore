@@ -51,6 +51,10 @@ app.*.map.json
 # Firebase options generated file (can contain API keys)
 lib/firebase_options.dart
 
+# Platform-specific Firebase service configs
+android/app/google-services.json
+ios/Runner/GoogleService-Info.plist
+
 # iOS related
 **/ios/**/*.mode1v3
 **/ios/**/*.mode2v3
